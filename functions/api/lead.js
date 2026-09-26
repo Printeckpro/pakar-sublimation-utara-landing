@@ -1,88 +1,92 @@
 const SALES = [
-  { name: "Danial", phone: "601110892029", active: true },
-  { name: "Miza", phone: "60109262029", active: true },
-  { name: "Anisha", phone: "60189420299", active: true },
+  { name: 'Danial', phone: '601110892029', active: true },
+  { name: 'Miza', phone: '60109262029', active: true },
+  { name: 'Anisha', phone: '60189420299', active: true },
 ];
 
-const PRODUCT = "Baju sublimation RM28/pc + free patch";
-
-function reply(body, status = 200) {
+function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff'
+    }
   });
 }
 
 export async function onRequestPost({ request, env }) {
   if (!env.ROTATOR_DB) {
-    return reply({ error: "Database rotator belum disambung." }, 503);
+    return json({ error: 'Rotator belum disambung ke database.' }, 503);
+  }
+
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== new URL(request.url).origin) {
+    return json({ error: 'Permintaan tidak dibenarkan.' }, 403);
   }
 
   let data;
   try {
     data = await request.json();
   } catch {
-    return reply({ error: "Data tempahan tidak lengkap." }, 400);
+    return json({ error: 'Data tidak lengkap.' }, 400);
   }
 
+  const products = ['Baju sublimation RM28/pc + free patch'];
+  const product = typeof data.product === 'string' ? data.product : '';
   const quantity = Number(data.quantity);
-  const group = typeof data.group === "string"
+  const group = typeof data.group === 'string'
     ? data.group.trim().slice(0, 100)
-    : "";
-  const notes = typeof data.notes === "string"
+    : '';
+  const notes = typeof data.notes === 'string'
     ? data.notes.trim().slice(0, 160)
-    : "";
-  const date = typeof data.date === "string"
-    && /^\d{4}-\d{2}-\d{2}$/.test(data.date)
-      ? data.date
-      : "";
+    : '';
+  const date = typeof data.date === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(data.date)
+    ? data.date
+    : '';
 
-  if (
-    data.product !== PRODUCT ||
-    !Number.isInteger(quantity) ||
-    quantity < 1 ||
-    quantity > 100000 ||
-    !group
-  ) {
-    return reply({ error: "Semak semula detail tempahan." }, 400);
+  if (!Number.isInteger(quantity) || quantity < 10 || quantity > 100000) {
+    return json({
+      error: 'Minimum tempahan ialah 10 helai. Masukkan 10 helai atau lebih.'
+    }, 400);
   }
 
-  const activeSales = SALES.filter((person) => person.active);
+  if (!products.includes(product) || !group) {
+    return json({
+      error: 'Semak semula produk dan kegunaan tempahan.'
+    }, 400);
+  }
+
+  const active = SALES.filter(rep => rep.active);
+  if (!active.length) {
+    return json({ error: 'Team sales belum tersedia. Cuba lagi kemudian.' }, 503);
+  }
 
   try {
     const row = await env.ROTATOR_DB
-      .prepare(
-        "UPDATE rotation SET next_index = (next_index + 1) % ? " +
-        "WHERE id = 1 RETURNING next_index"
-      )
-      .bind(activeSales.length)
+      .prepare('UPDATE rotation SET next_index = (next_index + 1) % ? WHERE id = 1 RETURNING next_index')
+      .bind(active.length)
       .first();
 
-    if (!row) throw new Error("Giliran rotator tidak dijumpai");
+    if (!row) throw new Error('Missing rotation row');
 
-    const index =
-      (Number(row.next_index) + activeSales.length - 1)
-      % activeSales.length;
-    const sales = activeSales[index];
+    const index = (Number(row.next_index) + active.length - 1) % active.length;
+    const rep = active[index];
 
     const message = [
-      "Hi, saya nak tanya tempahan Pakar Sublimation Utara.",
-      `Produk: ${PRODUCT}`,
+      'Hi, saya nak tanya tempahan Pakar Sublimation Utara.',
+      `Produk: ${product}`,
       `Anggaran: ${quantity} helai`,
       `Untuk: ${group}`,
       date && `Tarikh sasaran: ${date}`,
       notes && `Nota: ${notes}`,
-    ].filter(Boolean).join("\n");
+    ].filter(Boolean).join('\n');
 
-    return reply({
-      url: `https://wa.me/${sales.phone}?text=${encodeURIComponent(message)}`,
+    return json({
+      url: `https://wa.me/${rep.phone}?text=${encodeURIComponent(message)}`
     });
   } catch {
-    return reply({
-      error: "Rotator belum tersedia. Cuba lagi sebentar.",
-    }, 503);
+    return json({ error: 'Rotator belum tersedia. Cuba lagi sebentar.' }, 503);
   }
 }
